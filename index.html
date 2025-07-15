@@ -1,0 +1,197 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Camix - Domiciliario</title>
+  <link rel="stylesheet" href="domiciliario.css" />
+</head>
+<body>
+  <h1>Camix - Domiciliario</h1>
+
+  <!-- ================== LOGIN ================== -->
+  <section id="inicio">
+    <h2>Iniciar Sesión</h2>
+    <input id="loginCorreo" placeholder="Correo" />
+    <input id="loginPass" placeholder="Contraseña" type="password" />
+    <button onclick="loginDomi()">Iniciar Sesión</button>
+  </section>
+
+  <!-- ================== PANEL DOMI ================== -->
+  <section id="panelDomi" style="display:none;">
+    <h2>Pedidos Activos</h2>
+    <ul id="listaPedidosActivos"></ul>
+
+    <h2>Historial</h2>
+    <ul id="listaHistorial"></ul>
+
+    <button onclick="cerrarSesion()">Cerrar Sesión</button>
+  </section>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+
+  <script src="domiciliario.js"></script>
+</body>
+</html><style>body {
+  font-family: Arial, sans-serif;
+  background: #f8f8f8;
+  text-align: center;
+  padding: 20px;
+}
+
+section {
+  margin: 20px auto;
+  padding: 20px;
+  max-width: 600px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 0 10px #ccc;
+}
+
+input, button {
+  margin: 5px;
+  padding: 10px;
+  width: 80%;
+  max-width: 400px;
+}
+
+button {
+  background: #007bff;
+  border: none;
+  color: white;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0056b3;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+}
+
+li {
+  text-align: left;
+  margin: 5px 0;
+  padding: 10px;
+  background: #f2f2f2;
+  border-radius: 5px;
+}</style><script>// Config Firebase
+const firebaseConfig = {
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_AUTH_DOMAIN",
+  projectId: "TU_PROJECT_ID",
+  storageBucket: "TU_STORAGE_BUCKET",
+  messagingSenderId: "TU_MSG_ID",
+  appId: "TU_APP_ID"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// Iniciar Sesión
+function loginDomi() {
+  const correo = document.getElementById('loginCorreo').value;
+  const pass = document.getElementById('loginPass').value;
+
+  auth.signInWithEmailAndPassword(correo, pass)
+    .then((cred) => {
+      return db.collection('domiciliarios').doc(cred.user.uid).get();
+    })
+    .then((doc) => {
+      if (doc.exists && doc.data().estado === "bloqueado") {
+        alert("🚫 Cuenta bloqueada.\nComunícate con soporte.");
+        auth.signOut();
+      } else {
+        document.getElementById('inicio').style.display = 'none';
+        document.getElementById('panelDomi').style.display = 'block';
+        cargarPedidosActivos();
+        cargarHistorial();
+      }
+    })
+    .catch(err => alert(err.message));
+}
+
+// Cargar Pedidos Activos
+function cargarPedidosActivos() {
+  const uid = auth.currentUser.uid;
+  db.collection('pedidos')
+    .where('domiId', '==', uid)
+    .where('estado', 'in', ['Asignado', 'Recogiendo', 'En Camino'])
+    .get().then(snapshot => {
+      const lista = document.getElementById('listaPedidosActivos');
+      lista.innerHTML = "";
+      snapshot.forEach(doc => {
+        const p = doc.data();
+        const total = p.valorPedido + p.valorDomiciliario;
+        const li = document.createElement('li');
+        li.textContent = `#${p.orden}`;
+        li.onclick = () => {
+          const detalle = `#${p.orden}\nCliente: ${p.cliente}\nDirección: ${p.direccion}\nMétodo Pago: ${p.metodoPago}\nTOTAL A COBRAR: ${p.metodoPago === "Efectivo" ? "$" + total : "N/A"}\nEstado: ${p.estado}`;
+          const opciones = confirm(`${detalle}\n\n¿Abrir dirección en Google Maps?`);
+          if (opciones) {
+            window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.direccion)}`);
+          } else {
+            cambiarEstado(p, doc.id);
+          }
+        };
+        lista.appendChild(li);
+      });
+    });
+}
+
+// Cambiar Estado
+function cambiarEstado(pedido, idDoc) {
+  let nuevoEstado = "";
+  if (pedido.estado === "Asignado") {
+    nuevoEstado = "Recogiendo";
+  } else if (pedido.estado === "Recogiendo") {
+    nuevoEstado = "En Camino";
+  } else if (pedido.estado === "En Camino") {
+    nuevoEstado = "Entregado";
+  } else {
+    alert("No se puede cambiar más el estado.");
+    return;
+  }
+
+  db.collection('pedidos').doc(idDoc).update({ estado: nuevoEstado }).then(() => {
+    alert(`Estado actualizado a ${nuevoEstado}`);
+    cargarPedidosActivos();
+    cargarHistorial();
+  });
+}
+
+// Cargar Historial
+function cargarHistorial() {
+  const uid = auth.currentUser.uid;
+  db.collection('pedidos')
+    .where('domiId', '==', uid)
+    .where('estado', 'in', ['Entregado', 'Cancelado'])
+    .get().then(snapshot => {
+      const lista = document.getElementById('listaHistorial');
+      lista.innerHTML = "";
+      snapshot.forEach(doc => {
+        const p = doc.data();
+        const total = p.valorPedido + p.valorDomiciliario;
+        const li = document.createElement('li');
+        li.textContent = `#${p.orden}`;
+        li.onclick = () => {
+          alert(`#${p.orden}\nCliente: ${p.cliente}\nDirección: ${p.direccion}\nMétodo Pago: ${p.metodoPago}\nTOTAL: ${p.metodoPago === "Efectivo" ? "$" + total : "N/A"}\nEstado Final: ${p.estado}\nPendiente Pago: ${p.pendientePago ? "Sí" : "No"}\nPendiente Devolución: ${p.pendienteDevolucion ? "Sí" : "No"}`);
+        };
+        lista.appendChild(li);
+      });
+    });
+}
+
+// Cerrar Sesión
+function cerrarSesion() {
+  auth.signOut().then(() => {
+    alert("Sesión cerrada correctamente");
+    document.getElementById('panelDomi').style.display = 'none';
+    document.getElementById('inicio').style.display = 'block';
+  });
+}</script>
